@@ -63,6 +63,33 @@ def plot_monte_carlo(mc: dict, initial_equity: float, out_path: Path):
     plt.close(fig)
 
 
+def evaluate_on(cfg: dict, contract: str, agent, meta: dict, genome: dict,
+                run_procedures: bool = True) -> dict:
+    """Backtest a frozen policy + risk genome on one contract.
+
+    The reusable core of this stage: `run` uses it for the final test report,
+    and the discovery search uses it to score every candidate on validation.
+    """
+    bt = cfg["backtest"]
+    con = db.connect(cfg["data"]["db_path"])
+    data = dataset.load_contract(con, contract, meta["features"])
+    con.close()
+    dataset.apply_scaler(data, meta["scaler"])
+
+    signals = backtest.compute_signals(agent, data, meta["lookback"],
+                                       ACTION_SPACES[meta["action_space"]])
+    result = backtest.run_overlay(data["bars"], signals, genome, bt)
+    m = backtest.metrics(result, bt["initial_equity"])
+    m.update(backtest.signal_diagnostics(signals))
+
+    risk_reports = {}
+    if run_procedures:
+        pnls = [t["pnl"] for t in result["trades"]]
+        for name in cfg["risk"]["procedures"]:
+            risk_reports[name] = RISK_REGISTRY[name](pnls, bt["initial_equity"], cfg)
+    return {"metrics": m, "risk": risk_reports, "result": result}
+
+
 def run(cfg: dict, progress=None) -> dict:
     art = Path(cfg["artifacts_dir"])
     bt = cfg["backtest"]
@@ -71,24 +98,12 @@ def run(cfg: dict, progress=None) -> dict:
     agent, meta = train.load_trained(cfg)
     genome = json.loads((art / "risk_genome.json").read_text())["genome"]
 
-    con = db.connect(cfg["data"]["db_path"])
-    test = dataset.load_contract(con, contract, meta["features"])
-    con.close()
-    dataset.apply_scaler(test, meta["scaler"])
-
     if progress:
         progress(10, {"Phase": "computing policy signals", "Contract": contract})
-    signals = backtest.compute_signals(agent, test, meta["lookback"],
-                                       ACTION_SPACES[meta["action_space"]])
-    result = backtest.run_overlay(test["bars"], signals, genome, bt)
-    m = backtest.metrics(result, bt["initial_equity"])
+    ev = evaluate_on(cfg, contract, agent, meta, genome)
+    result, m, risk_reports = ev["result"], ev["metrics"], ev["risk"]
     if progress:
         progress(50, {"Phase": "risk procedures", "Net return": f'{m["return_pct"]}%'})
-
-    pnls = [t["pnl"] for t in result["trades"]]
-    risk_reports = {}
-    for name in cfg["risk"]["procedures"]:
-        risk_reports[name] = RISK_REGISTRY[name](pnls, bt["initial_equity"], cfg)
 
     # Charts + tabular artifacts
     plot_equity(result, art / "equity_curve.png", contract)

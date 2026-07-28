@@ -4,7 +4,7 @@
 
 ### DB-seeded, end-to-end AI trading pipeline — MNQ 5-minute strategy
 
-SQLite market DB → feature engineering → CNN encoder → PPO agent → GA risk optimization → Monte Carlo evaluation — with optional live telemetry into [AlgoDashboard](https://github.com/Dekeviin/AlgoDashboard).
+SQLite market DB → feature engineering → CNN encoder → PPO agent → GA risk optimization → Monte Carlo evaluation → automated strategy discovery — with optional live telemetry into [AlgoDashboard](https://github.com/Dekeviin/AlgoDashboard).
 
 ![Python](https://img.shields.io/badge/Python_3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
@@ -59,6 +59,38 @@ Everything lands in `artifacts/`: `report.json`, `trades.csv`, `equity_curve.csv
 | **3 · Training** | `pipeline/train.py` | 1-D **CNN** treats each indicator as a channel and convolves across the 32-bar window; a **PPO** actor-critic trains on random episode segments with switching friction in the reward. Action space is configurable — the demo uses long/short (direction only; the risk overlay manages position), `long_flat_short` is one config line away. |
 | **4a · Risk GA** | `pipeline/risk/ga.py` | Policy frozen; a **genetic algorithm** (tournament selection, uniform crossover, gaussian mutation, elitism) evolves the risk genome — ATR stop/target multiples, %-equity sizing, daily-loss circuit breaker — on validation data. Fitness = return − ½·max drawdown. |
 | **4b · Evaluation** | `pipeline/evaluate.py` | Frozen policy + winning genome on the untouched test contract, then every registered risk procedure — the demo ships **Monte Carlo** (2,000 bootstrap resamples of the trade P&Ls → terminal-equity percentiles, drawdown distribution, P(ruin), trade VaR). |
+| **5 · Discovery** | `pipeline/search.py` | The funnel on top — samples N strategy configs, runs each through the whole pipeline, and keeps only those clearing every **acceptance gate**. See below. |
+
+---
+
+## ✦ Strategy discovery — the funnel
+
+Stages 1–4 evaluate *one* strategy. Stage 5 is the part that makes it a research system: it generates candidates and throws most of them away.
+
+```bash
+.venv\Scripts\python run_discovery.py                  # search, gate, report survivors
+.venv\Scripts\python run_discovery.py --refresh-data   # re-ingest first
+```
+
+```
+search space  ──▶  N candidates  ──▶  each: train → GA risk → validation → Monte Carlo
+                                              │
+                                              ▼
+                                       acceptance gates
+                                    (trades, profit factor,
+                                     Sharpe, drawdown, P(ruin))
+                                              │
+                                              ▼
+                                         survivors ──▶ test-set confirmation
+```
+
+**Selection discipline is the whole point.** Candidates are ranked and gated **only** on the validation contract. The test contract is touched once, *after* survivors are chosen — so the final number is a real out-of-sample read, not the best of N peeks. Gates are a registry (`pipeline/gates.py`) with thresholds in `config.yaml`; a run that produces **zero** survivors is a valid, reported outcome, because a filter that never says no isn't a filter.
+
+**Gates check the policy, not just the P&L.** The first version of this search let a candidate through with a profit factor of 1.30 and a Sharpe of 4.0 — it had collapsed to holding one position for all 18,464 bars, so it was buy-and-hold on a bullish December wearing a strategy's clothes. Outcome metrics structurally cannot catch that. Two degeneracy gates now do: `min_signal_changes` and `max_position_concentration_pct` (from `backtest.signal_diagnostics`), which also reject the opposite failure — a policy that flips position every single bar.
+
+Each candidate varies its feature subset, lookback, CNN depth, and PPO entropy; the search is embarrassingly parallel, so a real run distributes candidates across workers. Output: `artifacts/discovery/discovery_report.json` — every candidate, its gate-by-gate verdict, and the survivors with test confirmation.
+
+**Unattended runs.** `run_discovery.py` is built to be scheduled after the close (Windows Task Scheduler or cron — one-liners in the module docstring), so the search runs on its own and leaves a survivors report to read in the morning.
 
 ---
 
@@ -75,6 +107,8 @@ Every extension point is a **registry + config key** — add a module, list it i
 | A different action space | `config.yaml` | `train.action_space: long_flat_short` (or add one in `pipeline/env.py`) |
 | A risk gene (trailing stop, time stop) | `config.yaml` + `backtest.py` | add bounds under `risk.ga.genes`, read it in `run_overlay` |
 | A risk procedure (VaR, Kelly, stress) | `pipeline/risk/` | `@risk_procedure("var")` + add to `risk.procedures` |
+| An acceptance gate (min win rate, max exposure) | `pipeline/gates.py` | `@gate("min_win_rate")` + add to `discovery.gates` |
+| A wider strategy search | `config.yaml` | extend `discovery.space` / raise `max_candidates` |
 | Another instrument / timeframe | `config.yaml` | drop exports in `data/raw`, set `timeframe_min` |
 
 ---

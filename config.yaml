@@ -96,6 +96,42 @@ backtest:
   max_contracts: 10
   atr_period: 14
 
+# ── Stage 5: strategy discovery — generate candidates, filter survivors ──────
+# The funnel: sample N strategy configs from `space`, run each through the full
+# train → GA → validation → Monte Carlo path, keep only those clearing every
+# gate, then confirm survivors once on the test contract.
+# Scale up by widening `space` or raising max_candidates — it is embarrassingly
+# parallel, so a real run distributes candidates across workers.
+discovery:
+  max_candidates: 8
+  seed: 11
+  train_timesteps: 40000           # shorter than a headline run; winners get retrained
+  space:
+    features:
+      - [ema_fast, ema_slow, rsi]
+      - [ema_fast, ema_slow, macd, macd_hist]
+      - [ema_fast, ema_slow, rsi, macd, macd_hist]
+      - [rsi, macd, macd_hist]
+    lookback: [16, 32, 64]
+    action_space: [long_short]
+    cnn_channels:
+      - [32]
+      - [32, 64]
+      - [64, 128]
+    ent_coef: [0.01, 0.03]
+  # Acceptance gates — every one must pass. Registry keys from pipeline/gates.py.
+  gates:
+    min_trades: 30
+    min_profit_factor: 1.05
+    min_sharpe: 0.5
+    max_drawdown_pct: 25
+    max_prob_ruin_pct: 25
+    # Degeneracy checks — outcome metrics alone can't tell a learned policy from
+    # a collapsed constant, and a buy-and-hold agent passes PF/Sharpe on any
+    # trending contract. These reject that directly.
+    min_signal_changes: 20
+    max_position_concentration_pct: 95
+
 # ── Optional: live-link progress into AlgoDashboard ──────────────────────────
 # Writes pipeline_meta / pipeline_stages / pipeline_details in the dashboard's
 # SQLite DB as stages run. Enable here or pass --sync-dashboard.

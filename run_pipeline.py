@@ -16,12 +16,12 @@ from pipeline.dashboard_sync import DashboardSync
 
 STAGES = ["ingest", "features", "train", "risk", "evaluate"]
 DASH_KEY = {"ingest": "ingestion", "features": "features", "train": "training",
-            "risk": "testing", "evaluate": "testing"}
+            "risk": "testing", "evaluate": "testing", "discover": "testing"}
 
 
 def main():
     ap = argparse.ArgumentParser(description="MNQ 5-min AI trading pipeline demo")
-    ap.add_argument("--stage", choices=STAGES + ["all"], default="all")
+    ap.add_argument("--stage", choices=STAGES + ["all", "discover"], default="all")
     ap.add_argument("--config", default=None, help="alternate config.yaml")
     ap.add_argument("--sync-dashboard", action="store_true",
                     help="write live progress into AlgoDashboard's SQLite DB")
@@ -32,13 +32,14 @@ def main():
         cfg["dashboard"]["enabled"] = True
     dash = DashboardSync(cfg)
 
-    from pipeline import evaluate, features, ingest, train
+    from pipeline import evaluate, features, ingest, search, train
     from pipeline.risk import ga
     runners = {"ingest": ingest.run, "features": features.run, "train": train.run,
-               "risk": ga.run, "evaluate": evaluate.run}
+               "risk": ga.run, "evaluate": evaluate.run, "discover": search.run}
     stage_names = {"ingest": "Ingestion", "features": "Feature Engineering",
                    "train": "Training (CNN → PPO)", "risk": "Risk GA",
-                   "evaluate": "Evaluation + Monte Carlo"}
+                   "evaluate": "Evaluation + Monte Carlo",
+                   "discover": "Strategy Discovery"}
 
     todo = STAGES if args.stage == "all" else [args.stage]
     if args.stage == "all" and dash.enabled:

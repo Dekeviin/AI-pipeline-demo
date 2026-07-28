@@ -35,6 +35,22 @@ def compute_signals(agent, data: dict, lookback: int, action_map: dict[int, int]
     return signals
 
 
+def signal_diagnostics(signals: np.ndarray) -> dict:
+    """Is this actually a policy, or a constant wearing a costume?
+
+    A collapsed agent that holds one position all period posts whatever the
+    market did — on a trending validation contract that sails through profit
+    factor and Sharpe gates while having learned nothing. Outcome metrics
+    cannot see this; these two can.
+    """
+    s = np.asarray(signals)
+    counts = np.bincount(s.astype(int) + 1, minlength=3)
+    return {
+        "signal_changes": int((np.diff(s) != 0).sum()),
+        "position_concentration_pct": round(float(counts.max()) / len(s) * 100, 1),
+    }
+
+
 def atr(bars: pd.DataFrame, period: int) -> np.ndarray:
     pc = bars["close"].shift(1)
     tr = pd.concat([bars["high"] - bars["low"],
