@@ -4,7 +4,7 @@
 
 ### DB-seeded, end-to-end AI trading pipeline — MNQ 5-minute strategy
 
-SQLite market DB → feature engineering → CNN encoder → PPO agent → GA risk optimization → Monte Carlo evaluation — with optional live telemetry into [AlgoDashboard](../AlgoDashboard).
+SQLite market DB → feature engineering → CNN encoder → PPO agent → GA risk optimization → Monte Carlo evaluation — with optional live telemetry into [AlgoDashboard](https://github.com/Dekeviin/AlgoDashboard).
 
 ![Python](https://img.shields.io/badge/Python_3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
@@ -81,7 +81,7 @@ Every extension point is a **registry + config key** — add a module, list it i
 
 ## ✦ AlgoDashboard live link
 
-The pipeline can mirror its progress into [AlgoDashboard](../AlgoDashboard)'s **AI-pipeline telemetry panel** (the four-stage Ingestion → Features → Training → Testing card) by writing the dashboard's own `pipeline_meta` / `pipeline_stages` / `pipeline_details` SQLite tables as stages run:
+The pipeline can mirror its progress into [AlgoDashboard](https://github.com/Dekeviin/AlgoDashboard)'s **AI-pipeline telemetry panel** (the four-stage Ingestion → Features → Training → Testing card) by writing the dashboard's own `pipeline_meta` / `pipeline_stages` / `pipeline_details` SQLite tables as stages run:
 
 ```bash
 .venv\Scripts\python run_pipeline.py --sync-dashboard
