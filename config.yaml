@@ -1,0 +1,106 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  AI Pipeline Demo — single source of truth for every stage.
+#  Tune here; no stage hardcodes parameters.
+# ═══════════════════════════════════════════════════════════════════════════
+
+data:
+  raw_dir: data/raw                # NinjaTrader-format exports (demo sample: MNQ)
+  db_path: data/market.db          # SQLite seed DB — every stage downstream reads ONLY this
+  symbol: MNQ
+  contracts: all                   # 'all' or a list of filename stems to ingest
+  timeframe_min: 5                 # strategy timeframe, resampled from the 1-min export
+
+# ── Stage 2: feature engineering ─────────────────────────────────────────────
+# Capped at 5 indicators to keep the demo fast. To scale up: implement the
+# indicator in pipeline/features.py (@feature decorator) and list it here.
+features:
+  active: [ema_fast, ema_slow, rsi, macd, macd_hist]
+  params:
+    ema_fast:  {period: 9}
+    ema_slow:  {period: 21}
+    rsi:       {period: 14}
+    macd:      {fast: 12, slow: 26, signal: 9}
+    macd_hist: {fast: 12, slow: 26, signal: 9}
+
+# ── Stage 3: model training (CNN encoder → PPO agent) ────────────────────────
+# encoder/agent are registry keys — add new architectures in pipeline/models/
+# and swap them here without touching the trainer.
+train:
+  train_contracts: ["MNQ MAR24", "MNQ JUN24", "MNQ SEP24"]
+  val_contract: "MNQ DEC24"        # GA risk optimization runs here (never seen in training)
+  test_contract: "MNQ MAR25"       # final out-of-sample evaluation
+  lookback: 32                     # bars per observation window fed to the CNN
+  # long_short = direction-only, always in the market (position management is
+  # the risk overlay's job). long_flat_short adds a flat action — with a weak
+  # intraday edge PPO tends to collapse into never trading, so demo uses 2.
+  action_space: long_short
+  encoder: cnn
+  agent: ppo
+  device: auto                     # auto | cpu | cuda
+  cnn:
+    channels: [32, 64]             # one conv block per entry — append to go deeper
+    kernel: 3
+    embed_dim: 64
+  ppo:
+    total_timesteps: 120000        # ~1 min on CPU; raise for real research runs
+    n_steps: 2048                  # rollout length per update
+    batch_size: 256
+    epochs: 6                      # gradient epochs per rollout
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_eps: 0.2
+    lr: 0.0003
+    ent_coef: 0.03                 # high enough that the policy keeps exploring
+                                   # instead of collapsing to always-flat
+    vf_coef: 0.5
+    episode_len: 512               # bars per training episode (random segment)
+    cost_bp: 0.0                   # per-switch friction (bp), in-reward. Real fees are
+                                   # charged by the risk-overlay backtest; charging them
+                                   # in-reward too makes holding sticky and at demo
+                                   # scale collapses PPO into a single static position
+    reward_scale: 100              # log-returns are tiny; rescale for stable value loss
+    demean_returns: true           # train on drift-adjusted returns so the agent must
+                                   # time entries instead of collapsing to buy-and-hold
+
+# ── Stage 4a: risk management — GA optimizes the risk overlay ────────────────
+risk:
+  ga:
+    population: 20
+    generations: 10
+    tournament_k: 3
+    crossover_rate: 0.7
+    mutation_rate: 0.25
+    mutation_scale: 0.3
+    seed: 42
+    # gene: [min, max] — add a gene here + read it in pipeline/backtest.py to extend
+    genes:
+      stop_atr_mult:    [0.75, 4.0]  # stop distance in ATR(14) multiples
+      target_atr_mult:  [0.5, 6.0]   # profit target in ATR multiples
+      risk_frac:        [0.0025, 0.01] # equity fraction risked per trade (max 1%)
+      max_daily_loss_r: [1.0, 5.0]   # daily circuit breaker, in R multiples
+  # Evaluation procedures — registry keys from pipeline/risk/.
+  # Add e.g. 'var_historical' or 'kelly' there and list it here to scale up.
+  procedures: [monte_carlo]
+  monte_carlo:
+    n_paths: 2000
+    seed: 7
+    ruin_drawdown_pct: 30          # a path "ruins" if drawdown exceeds this
+
+# ── Backtest mechanics (shared by GA fitness + final evaluation) ─────────────
+backtest:
+  initial_equity: 25000
+  point_value: 2.0                 # MNQ = $2 per index point
+  commission_per_side: 0.52
+  slippage_ticks: 1
+  tick_size: 0.25
+  max_contracts: 10
+  atr_period: 14
+
+# ── Optional: live-link progress into AlgoDashboard ──────────────────────────
+# Writes pipeline_meta / pipeline_stages / pipeline_details in the dashboard's
+# SQLite DB as stages run. Enable here or pass --sync-dashboard.
+dashboard:
+  enabled: false
+  db_path: "C:/Users/Kevin/Desktop/Coding Projects/AlgoDashboard/data/algodashboard.db"
+
+artifacts_dir: artifacts
